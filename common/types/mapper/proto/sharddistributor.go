@@ -24,6 +24,7 @@ package proto
 
 import (
 	"bytes"
+	"maps"
 
 	sharddistributorv1 "github.com/cadence-workflow/shard-manager/.gen/proto/sharddistributor/v1"
 	"github.com/cadence-workflow/shard-manager/common/types"
@@ -1273,20 +1274,20 @@ func fromShardDistributorRange(t *types.Range) *sharddistributorv1.Range {
 }
 
 // toShardDistributorRange maps a proto Range to a types.Range. An empty
-// high_exclusive maps to the internal infinite upper bound.
-// The sentinel is cloned too so no caller can mutate the shared
+// high_exclusive maps to the internal infinite upper bound. Bounds are cloned,
+// including the sentinel, so no caller can mutate the range or the shared
 // types.RangeUpperBoundInfinity slice.
 func toShardDistributorRange(t *sharddistributorv1.Range) *types.Range {
 	if t == nil {
 		return nil
 	}
-	highExclusive := bytes.Clone(t.GetHighExclusive())
-	if len(t.GetHighExclusive()) == 0 {
-		highExclusive = bytes.Clone(types.RangeUpperBoundInfinity)
+	highExclusive := types.RangeUpperBoundInfinity
+	if len(t.GetHighExclusive()) != 0 {
+		highExclusive = t.GetHighExclusive()
 	}
 	return &types.Range{
 		LowInclusive:  bytes.Clone(t.GetLowInclusive()),
-		HighExclusive: highExclusive,
+		HighExclusive: bytes.Clone(highExclusive),
 	}
 }
 
@@ -1338,16 +1339,9 @@ func fromShardDistributorRangeLoadReport(t *types.RangeLoadReport) *sharddistrib
 	if t == nil {
 		return nil
 	}
-	var topTasklists map[string]float64
-	if t.GetTopTasklists() != nil {
-		topTasklists = make(map[string]float64, len(t.GetTopTasklists()))
-		for name, load := range t.GetTopTasklists() {
-			topTasklists[name] = load
-		}
-	}
 	return &sharddistributorv1.RangeLoadReport{
 		RangeLoad:    t.GetRangeLoad(),
-		TopTasklists: topTasklists,
+		TopTasklists: maps.Clone(t.GetTopTasklists()),
 	}
 }
 
@@ -1355,16 +1349,9 @@ func toShardDistributorRangeLoadReport(t *sharddistributorv1.RangeLoadReport) *t
 	if t == nil {
 		return nil
 	}
-	var topTasklists map[string]float64
-	if t.GetTopTasklists() != nil {
-		topTasklists = make(map[string]float64, len(t.GetTopTasklists()))
-		for name, load := range t.GetTopTasklists() {
-			topTasklists[name] = load
-		}
-	}
 	return &types.RangeLoadReport{
 		RangeLoad:    t.GetRangeLoad(),
-		TopTasklists: topTasklists,
+		TopTasklists: maps.Clone(t.GetTopTasklists()),
 	}
 }
 

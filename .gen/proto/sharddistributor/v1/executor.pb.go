@@ -346,12 +346,13 @@ func (m *ShardStatusReport) GetShardLoad() float64 {
 }
 
 type HeartbeatResponse struct {
-	ShardAssignments     map[string]*ShardAssignment `protobuf:"bytes,1,rep,name=shard_assignments,json=shardAssignments,proto3" json:"shard_assignments,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	MigrationMode        MigrationMode               `protobuf:"varint,2,opt,name=migration_mode,json=migrationMode,proto3,enum=uber.cadence.sharddistributor.v1.MigrationMode" json:"migration_mode,omitempty"`
-	RangeAssignments     []*RangeAssignment          `protobuf:"bytes,3,rep,name=range_assignments,json=rangeAssignments,proto3" json:"range_assignments,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}                    `json:"-"`
-	XXX_unrecognized     []byte                      `json:"-"`
-	XXX_sizecache        int32                       `json:"-"`
+	ShardAssignments map[string]*ShardAssignment `protobuf:"bytes,1,rep,name=shard_assignments,json=shardAssignments,proto3" json:"shard_assignments,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	MigrationMode    MigrationMode               `protobuf:"varint,2,opt,name=migration_mode,json=migrationMode,proto3,enum=uber.cadence.sharddistributor.v1.MigrationMode" json:"migration_mode,omitempty"`
+	// The full range cover in range mode; empty in shard mode.
+	RangeAssignments     []*RangeAssignment `protobuf:"bytes,3,rep,name=range_assignments,json=rangeAssignments,proto3" json:"range_assignments,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}           `json:"-"`
+	XXX_unrecognized     []byte             `json:"-"`
+	XXX_sizecache        int32              `json:"-"`
 }
 
 func (m *HeartbeatResponse) Reset()         { *m = HeartbeatResponse{} }
@@ -584,7 +585,8 @@ type RangeLoadReport struct {
 	// Total load across the tasklists in the range.
 	RangeLoad float64 `protobuf:"fixed64,1,opt,name=range_load,json=rangeLoad,proto3" json:"range_load,omitempty"`
 	// Top-N tasklists by load within the range, keyed by tasklist name,
-	// aggregated client-side.
+	// aggregated client-side. Unordered and bounded by the producer; a consumer
+	// that needs rank must sort by load.
 	TopTasklists         map[string]float64 `protobuf:"bytes,2,rep,name=top_tasklists,json=topTasklists,proto3" json:"top_tasklists,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"fixed64,2,opt,name=value,proto3"`
 	XXX_NoUnkeyedLiteral struct{}           `json:"-"`
 	XXX_unrecognized     []byte             `json:"-"`

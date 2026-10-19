@@ -192,8 +192,8 @@ func TestRangeLoadReportDoesNotAlias(t *testing.T) {
 // protoWireFieldCount counts the fields that carry a protobuf tag, i.e. the
 // declared wire fields. The gogo-generated structs add unexported XXX_* helper
 // fields that a plain NumField count would wrongly include.
-func protoWireFieldCount(proto interface{}) int {
-	typ := reflect.TypeOf(proto)
+func protoWireFieldCount(msg interface{}) int {
+	typ := reflect.TypeOf(msg)
 	if typ.Kind() == reflect.Ptr {
 		typ = typ.Elem()
 	}
