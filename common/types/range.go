@@ -118,6 +118,20 @@ func (r *Range) IsFinalRange() bool {
 	return r != nil && bytes.Equal(r.HighExclusive, RangeUpperBoundInfinity)
 }
 
+func (r *Range) GetLowInclusive() []byte {
+	if r == nil {
+		return nil
+	}
+	return r.LowInclusive
+}
+
+func (r *Range) GetHighExclusive() []byte {
+	if r == nil {
+		return nil
+	}
+	return r.HighExclusive
+}
+
 // String returns a bounded hexadecimal representation used for logs.
 func (r *Range) String() string {
 	if !r.IsValid() {
@@ -125,4 +139,58 @@ func (r *Range) String() string {
 	}
 
 	return "[" + hex.EncodeToString(r.LowInclusive) + ", " + hex.EncodeToString(r.HighExclusive) + ")"
+}
+
+// RangeAssignment is the RPC-layer ownership record for one range. It mirrors
+// the wire type and carries no ModRevision; the storage-layer counterpart with
+// an optimistic-lock revision is store.RangeAssignment.
+type RangeAssignment struct {
+	Range      *Range
+	ExecutorID string
+	Status     AssignmentStatus
+}
+
+func (v *RangeAssignment) GetRange() (o *Range) {
+	if v != nil {
+		return v.Range
+	}
+	return
+}
+
+func (v *RangeAssignment) GetExecutorID() (o string) {
+	if v != nil {
+		return v.ExecutorID
+	}
+	return
+}
+
+func (v *RangeAssignment) GetStatus() (o AssignmentStatus) {
+	if v != nil {
+		return v.Status
+	}
+	return
+}
+
+// RangeLoadReport is the load report for one range, keyed by the hex-encoded
+// range lower bound in a range-mode heartbeat.
+type RangeLoadReport struct {
+	// RangeLoad is the total load falling inside the range.
+	RangeLoad float64
+	// TopTasklists holds the highest-load tasklists in the range, keyed by
+	// tasklist name.
+	TopTasklists map[string]float64
+}
+
+func (v *RangeLoadReport) GetRangeLoad() (o float64) {
+	if v != nil {
+		return v.RangeLoad
+	}
+	return
+}
+
+func (v *RangeLoadReport) GetTopTasklists() (o map[string]float64) {
+	if v != nil {
+		return v.TopTasklists
+	}
+	return
 }
