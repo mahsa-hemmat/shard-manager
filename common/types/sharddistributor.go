@@ -123,6 +123,7 @@ type GetFullNamespaceStateResponse struct {
 	ShardAssignments map[string]*AssignedState
 	DrainedShards    []string
 	DrainedHosts     map[string]*DrainedHost
+	RangeAssignments []*RangeAssignment
 }
 
 func (v *GetFullNamespaceStateResponse) GetNamespace() (o string) {
@@ -163,6 +164,13 @@ func (v *GetFullNamespaceStateResponse) GetDrainedShards() (o []string) {
 func (v *GetFullNamespaceStateResponse) GetDrainedHosts() (o map[string]*DrainedHost) {
 	if v != nil {
 		return v.DrainedHosts
+	}
+	return
+}
+
+func (v *GetFullNamespaceStateResponse) GetRangeAssignments() (o []*RangeAssignment) {
+	if v != nil {
+		return v.RangeAssignments
 	}
 	return
 }
@@ -523,6 +531,7 @@ type ExecutorHeartbeatRequest struct {
 	ExecutorID         string
 	Status             ExecutorStatus
 	ShardStatusReports map[string]*ShardStatusReport
+	RangeLoadReports   map[string]*RangeLoadReport
 	Metadata           map[string]string
 	HostMetadata       *HostMetadata
 }
@@ -556,6 +565,13 @@ func (v *ExecutorHeartbeatRequest) GetStatus() (o ExecutorStatus) {
 func (v *ExecutorHeartbeatRequest) GetShardStatusReports() (o map[string]*ShardStatusReport) {
 	if v != nil {
 		return v.ShardStatusReports
+	}
+	return
+}
+
+func (v *ExecutorHeartbeatRequest) GetRangeLoadReports() (o map[string]*RangeLoadReport) {
+	if v != nil {
+		return v.RangeLoadReports
 	}
 	return
 }
@@ -623,12 +639,20 @@ const (
 
 type ExecutorHeartbeatResponse struct {
 	ShardAssignments map[string]*ShardAssignment
+	RangeAssignments []*RangeAssignment
 	MigrationMode    MigrationMode
 }
 
 func (v *ExecutorHeartbeatResponse) GetShardAssignments() (o map[string]*ShardAssignment) {
 	if v != nil {
 		return v.ShardAssignments
+	}
+	return
+}
+
+func (v *ExecutorHeartbeatResponse) GetRangeAssignments() (o []*RangeAssignment) {
+	if v != nil {
+		return v.RangeAssignments
 	}
 	return
 }
@@ -716,6 +740,8 @@ type WatchNamespaceStateResponse struct {
 	Executors []*ExecutorShardAssignment
 	// DrainedShardKeys are the shards drained for this namespace
 	DrainedShardKeys []string
+	// RangeAssignments are the range assignments for this namespace in range mode
+	RangeAssignments []*RangeAssignment
 }
 
 func (v *WatchNamespaceStateResponse) GetExecutors() (o []*ExecutorShardAssignment) {
@@ -728,6 +754,13 @@ func (v *WatchNamespaceStateResponse) GetExecutors() (o []*ExecutorShardAssignme
 func (v *WatchNamespaceStateResponse) GetDrainedShardKeys() (o []string) {
 	if v != nil {
 		return v.DrainedShardKeys
+	}
+	return
+}
+
+func (v *WatchNamespaceStateResponse) GetRangeAssignments() (o []*RangeAssignment) {
+	if v != nil {
+		return v.RangeAssignments
 	}
 	return
 }
