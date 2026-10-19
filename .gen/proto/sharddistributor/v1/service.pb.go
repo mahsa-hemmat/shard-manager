@@ -747,16 +747,17 @@ func (m *GetFullNamespaceStateRequest) GetNamespace() string {
 }
 
 type GetFullNamespaceStateResponse struct {
-	Namespace            string                      `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Executors            map[string]*HeartbeatState  `protobuf:"bytes,2,rep,name=executors,proto3" json:"executors,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	ShardStats           map[string]*ShardStatistics `protobuf:"bytes,3,rep,name=shard_stats,json=shardStats,proto3" json:"shard_stats,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	ShardAssignments     map[string]*AssignedState   `protobuf:"bytes,4,rep,name=shard_assignments,json=shardAssignments,proto3" json:"shard_assignments,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	DrainedShards        []string                    `protobuf:"bytes,5,rep,name=drained_shards,json=drainedShards,proto3" json:"drained_shards,omitempty"`
-	DrainedHosts         map[string]*DrainedHost     `protobuf:"bytes,6,rep,name=drained_hosts,json=drainedHosts,proto3" json:"drained_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	RangeAssignments     []*RangeAssignment          `protobuf:"bytes,7,rep,name=range_assignments,json=rangeAssignments,proto3" json:"range_assignments,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}                    `json:"-"`
-	XXX_unrecognized     []byte                      `json:"-"`
-	XXX_sizecache        int32                       `json:"-"`
+	Namespace        string                      `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Executors        map[string]*HeartbeatState  `protobuf:"bytes,2,rep,name=executors,proto3" json:"executors,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	ShardStats       map[string]*ShardStatistics `protobuf:"bytes,3,rep,name=shard_stats,json=shardStats,proto3" json:"shard_stats,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	ShardAssignments map[string]*AssignedState   `protobuf:"bytes,4,rep,name=shard_assignments,json=shardAssignments,proto3" json:"shard_assignments,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	DrainedShards    []string                    `protobuf:"bytes,5,rep,name=drained_shards,json=drainedShards,proto3" json:"drained_shards,omitempty"`
+	DrainedHosts     map[string]*DrainedHost     `protobuf:"bytes,6,rep,name=drained_hosts,json=drainedHosts,proto3" json:"drained_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	// The full range cover in range mode; empty in shard mode.
+	RangeAssignments     []*RangeAssignment `protobuf:"bytes,7,rep,name=range_assignments,json=rangeAssignments,proto3" json:"range_assignments,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}           `json:"-"`
+	XXX_unrecognized     []byte             `json:"-"`
+	XXX_sizecache        int32              `json:"-"`
 }
 
 func (m *GetFullNamespaceStateResponse) Reset()         { *m = GetFullNamespaceStateResponse{} }

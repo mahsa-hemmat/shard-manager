@@ -161,13 +161,14 @@ func (v *RangeAssignment) GetStatus() (o AssignmentStatus) {
 	return
 }
 
-// RangeLoadReport is the load report for one range, keyed by the hex-encoded
-// range lower bound in a range-mode heartbeat.
+// RangeLoadReport is the load report for a single range in a range-mode heartbeat.
 type RangeLoadReport struct {
 	// RangeLoad is the total load falling inside the range.
 	RangeLoad float64
 	// TopTasklists holds the highest-load tasklists in the range, keyed by
-	// tasklist name.
+	// tasklist name. It is an unordered bounded top-N: the bound is
+	// not encoded here, and map iteration order is unspecified.
+	// A consumer that needs rank must sort by load with a deterministic tie-break.
 	TopTasklists map[string]float64
 }
 

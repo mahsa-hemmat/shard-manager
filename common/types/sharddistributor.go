@@ -531,9 +531,12 @@ type ExecutorHeartbeatRequest struct {
 	ExecutorID         string
 	Status             ExecutorStatus
 	ShardStatusReports map[string]*ShardStatusReport
-	RangeLoadReports   map[string]*RangeLoadReport
-	Metadata           map[string]string
-	HostMetadata       *HostMetadata
+	// RangeLoadReports carries per-range load in range mode, keyed by the
+	// hex-encoded range lower bound. In range mode these replace
+	// ShardStatusReports.
+	RangeLoadReports map[string]*RangeLoadReport
+	Metadata         map[string]string
+	HostMetadata     *HostMetadata
 }
 
 // HostMetadata carries host-level attributes reported on each heartbeat

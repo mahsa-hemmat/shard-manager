@@ -161,6 +161,7 @@ message GetFullNamespaceStateResponse {
   map<string, AssignedState> shard_assignments = 4;
   repeated string drained_shards = 5;
   map<string, DrainedHost> drained_hosts = 6;
+  // The full range cover in range mode; empty in shard mode.
   repeated RangeAssignment range_assignments = 7;
 }
 

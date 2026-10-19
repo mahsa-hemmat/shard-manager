@@ -77,6 +77,7 @@ enum ShardStatus {
 message HeartbeatResponse {
   map<string, ShardAssignment> shard_assignments = 1;
   MigrationMode migration_mode = 2;
+  // The full range cover in range mode; empty in shard mode.
   repeated RangeAssignment range_assignments = 3;
 }
 
@@ -124,6 +125,7 @@ message RangeLoadReport {
   // Total load across the tasklists in the range.
   double range_load = 1;
   // Top-N tasklists by load within the range, keyed by tasklist name,
-  // aggregated client-side. 
+  // aggregated client-side. Unordered and bounded by the producer; a consumer
+  // that needs rank must sort by load.
   map<string, double> top_tasklists = 2;
 }
