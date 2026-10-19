@@ -301,7 +301,7 @@ func TestWatchNamespaceStateResponseFuzz(t *testing.T) {
 	// WatchNamespaceStateResponseFuzzer avoids nil slices/elements because protobuf
 	// cannot distinguish nil from empty repeated fields — both round-trip to non-nil [].
 	testutils.RunMapperFuzzTest(t, FromShardDistributorWatchNamespaceStateResponse, ToShardDistributorWatchNamespaceStateResponse,
-		testutils.WithCustomFuncs(WatchNamespaceStateResponseFuzzer),
+		testutils.WithCustomFuncs(WatchNamespaceStateResponseFuzzer, RangeFuzzer, AssignmentStatusFuzzer),
 	)
 }
 
@@ -341,7 +341,7 @@ func TestExecutorHeartbeatRequestFuzz(t *testing.T) {
 
 func TestExecutorHeartbeatResponseFuzz(t *testing.T) {
 	testutils.RunMapperFuzzTest(t, FromShardDistributorExecutorHeartbeatResponse, ToShardDistributorExecutorHeartbeatResponse,
-		testutils.WithCustomFuncs(AssignmentStatusFuzzer, MigrationModeFuzzer, ExecutorHeartbeatResponseFuzzer),
+		testutils.WithCustomFuncs(AssignmentStatusFuzzer, MigrationModeFuzzer, ExecutorHeartbeatResponseFuzzer, RangeFuzzer),
 	)
 }
 

@@ -23,6 +23,7 @@
 package testdata
 
 import (
+	"bytes"
 	"time"
 
 	"github.com/cadence-workflow/shard-manager/common/types"
@@ -52,6 +53,12 @@ var (
 				ShardLoad: 0.75,
 			},
 		},
+		RangeLoadReports: map[string]*types.RangeLoadReport{
+			"0000000000000000": {
+				RangeLoad:    1.5,
+				TopTasklists: map[string]float64{"tasklist-a": 0.9, "tasklist-b": 0.6},
+			},
+		},
 		Metadata: map[string]string{
 			"key-1": "value-1",
 			"key-2": "value-2",
@@ -68,6 +75,10 @@ var (
 			"shard-key-2": {
 				Status: types.AssignmentStatusINVALID,
 			},
+		},
+		RangeAssignments: []*types.RangeAssignment{
+			newRangeAssignment("executor-1", 0x00, 0x40),
+			newFinalRangeAssignment("executor-2", 0xC0),
 		},
 	}
 	ShardDistributorWatchNamespaceStateRequest = types.WatchNamespaceStateRequest{
@@ -87,6 +98,10 @@ var (
 			},
 		},
 		DrainedShardKeys: []string{"shard-4", "shard-5"},
+		RangeAssignments: []*types.RangeAssignment{
+			newRangeAssignment("executor-1", 0x00, 0x40),
+			newFinalRangeAssignment("executor-2", 0xC0),
+		},
 	}
 	ShardDistributorGetNamespaceStateRequest = types.GetNamespaceStateRequest{
 		Namespace: "namespace",
@@ -151,6 +166,10 @@ var (
 				DrainedBy: "operator",
 				Reason:    "maintenance",
 			},
+		},
+		RangeAssignments: []*types.RangeAssignment{
+			newRangeAssignment("executor-1", 0x00, 0x40),
+			newFinalRangeAssignment("executor-2", 0xC0),
 		},
 	}
 	ShardDistributorGetExecutorStateRequest = types.GetExecutorStateRequest{
@@ -225,3 +244,29 @@ var (
 		},
 	}
 )
+
+// newRangeAssignment builds a finite range assignment with fresh bounds, so
+// fixtures never share a range pointer.
+func newRangeAssignment(executorID string, low, high byte) *types.RangeAssignment {
+	return &types.RangeAssignment{
+		Range: &types.Range{
+			LowInclusive:  []byte{low, 0, 0, 0, 0, 0, 0, 0},
+			HighExclusive: []byte{high, 0, 0, 0, 0, 0, 0, 0},
+		},
+		ExecutorID: executorID,
+		Status:     types.AssignmentStatusREADY,
+	}
+}
+
+// newFinalRangeAssignment builds the final [low, ∞) assignment. The sentinel is
+// cloned to avoid sharing types.RangeUpperBoundInfinity.
+func newFinalRangeAssignment(executorID string, low byte) *types.RangeAssignment {
+	return &types.RangeAssignment{
+		Range: &types.Range{
+			LowInclusive:  []byte{low, 0, 0, 0, 0, 0, 0, 0},
+			HighExclusive: bytes.Clone(types.RangeUpperBoundInfinity),
+		},
+		ExecutorID: executorID,
+		Status:     types.AssignmentStatusREADY,
+	}
+}
