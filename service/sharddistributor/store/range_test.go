@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,6 +40,72 @@ func TestValidateRangeBounds(t *testing.T) {
 				return
 			}
 			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestRangeAssignmentClone(t *testing.T) {
+	low := []byte{0x00, 0, 0, 0, 0, 0, 0, 0}
+	high := []byte{0x80, 0, 0, 0, 0, 0, 0, 0}
+
+	tests := []struct {
+		name       string
+		assignment *RangeAssignment
+	}{
+		{
+			name:       "nil",
+			assignment: nil,
+		},
+		{
+			name:       "nil range",
+			assignment: &RangeAssignment{ExecutorID: "executor-1", Status: types.AssignmentStatusREADY, ModRevision: 7},
+		},
+		{
+			name: "finite",
+			assignment: &RangeAssignment{
+				Range:       &types.Range{LowInclusive: low, HighExclusive: high},
+				ExecutorID:  "executor-1",
+				Status:      types.AssignmentStatusREADY,
+				ModRevision: 7,
+			},
+		},
+		{
+			name: "final",
+			assignment: &RangeAssignment{
+				Range:      &types.Range{LowInclusive: high, HighExclusive: types.RangeUpperBoundInfinity},
+				ExecutorID: "executor-2",
+				Status:     types.AssignmentStatusINVALID,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clone := tt.assignment.Clone()
+			require.Equal(t, tt.assignment, clone)
+
+			if tt.assignment == nil || tt.assignment.Range == nil {
+				return
+			}
+
+			assert.NotSame(t, tt.assignment, clone)
+			assert.NotSame(t, tt.assignment.Range, clone.Range)
+
+			beforeLow := slices.Clone(tt.assignment.Range.LowInclusive)
+			beforeHigh := slices.Clone(tt.assignment.Range.HighExclusive)
+			beforeExecutor := tt.assignment.ExecutorID
+			isFinal := tt.assignment.Range.IsFinalRange()
+
+			clone.Range.LowInclusive[0] = 0xEE
+			clone.Range.HighExclusive[0] = 0xEE
+			clone.ExecutorID = "mutated"
+
+			assert.Equal(t, beforeLow, tt.assignment.Range.LowInclusive)
+			assert.Equal(t, beforeHigh, tt.assignment.Range.HighExclusive)
+			assert.Equal(t, beforeExecutor, tt.assignment.ExecutorID)
+			if isFinal {
+				assert.Equal(t, byte(0xFF), types.RangeUpperBoundInfinity[0], "clone must not share the sentinel")
+			}
 		})
 	}
 }

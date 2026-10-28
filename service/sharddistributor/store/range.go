@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -26,6 +27,29 @@ type RangeAssignment struct {
 	// the optimistic-lock token for guarded writes. It is 0 for a range that
 	// does not yet exist in etcd and is filled by reads (ListRanges, GetRange).
 	ModRevision int64
+}
+
+// Clone returns a deep copy: the range and both of its bounds are copied, so
+// mutating the clone can never change the original. Callers that hand a range
+// assignment outside the package must clone it, because the stored bounds may
+// be shared with an immutable index snapshot.
+func (a *RangeAssignment) Clone() *RangeAssignment {
+	if a == nil {
+		return nil
+	}
+
+	clone := &RangeAssignment{
+		ExecutorID:  a.ExecutorID,
+		Status:      a.Status,
+		ModRevision: a.ModRevision,
+	}
+	if a.Range != nil {
+		clone.Range = &types.Range{
+			LowInclusive:  bytes.Clone(a.Range.GetLowInclusive()),
+			HighExclusive: bytes.Clone(a.Range.GetHighExclusive()),
+		}
+	}
+	return clone
 }
 
 // RangeStore is the set of storage operations for range-based ownership.
