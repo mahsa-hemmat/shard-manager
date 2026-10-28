@@ -57,6 +57,36 @@ func (mr *MockShardCacheMockRecorder) GetExecutor(ctx, namespace, executorID any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetExecutor", reflect.TypeOf((*MockShardCache)(nil).GetExecutor), ctx, namespace, executorID)
 }
 
+// GetRangeAssignments mocks base method.
+func (m *MockShardCache) GetRangeAssignments(ctx context.Context, namespace string) ([]*store.RangeAssignment, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRangeAssignments", ctx, namespace)
+	ret0, _ := ret[0].([]*store.RangeAssignment)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRangeAssignments indicates an expected call of GetRangeAssignments.
+func (mr *MockShardCacheMockRecorder) GetRangeAssignments(ctx, namespace any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRangeAssignments", reflect.TypeOf((*MockShardCache)(nil).GetRangeAssignments), ctx, namespace)
+}
+
+// GetRangeForShardKey mocks base method.
+func (m *MockShardCache) GetRangeForShardKey(ctx context.Context, namespace string, key []byte) (*store.RangeAssignment, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRangeForShardKey", ctx, namespace, key)
+	ret0, _ := ret[0].(*store.RangeAssignment)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRangeForShardKey indicates an expected call of GetRangeForShardKey.
+func (mr *MockShardCacheMockRecorder) GetRangeForShardKey(ctx, namespace, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRangeForShardKey", reflect.TypeOf((*MockShardCache)(nil).GetRangeForShardKey), ctx, namespace, key)
+}
+
 // GetShardAssignments mocks base method.
 func (m *MockShardCache) GetShardAssignments(namespace string) (store.AssignmentSnapshot, error) {
 	m.ctrl.T.Helper()

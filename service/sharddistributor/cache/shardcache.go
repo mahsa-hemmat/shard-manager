@@ -25,15 +25,18 @@ type ShardCacheParams struct {
 }
 
 type NamespaceToShards map[string]*namespaceShardToExecutor
+type NamespaceToRangeIndex map[string]*namespaceRangeIndex
+
 type ShardToExecutorCache struct {
 	sync.RWMutex
-	namespaceToShards NamespaceToShards
-	timeSource        clock.TimeSource
-	executorStore     store.Store
-	stopC             chan struct{}
-	logger            log.Logger
-	wg                sync.WaitGroup
-	metricsClient     metrics.Client
+	namespaceToShards     NamespaceToShards
+	namespaceToRangeIndex NamespaceToRangeIndex
+	timeSource            clock.TimeSource
+	executorStore         store.Store
+	stopC                 chan struct{}
+	logger                log.Logger
+	wg                    sync.WaitGroup
+	metricsClient         metrics.Client
 }
 
 // Module provides the shard cache to the fx application.
@@ -43,13 +46,14 @@ var Module = fx.Module("shardcache",
 
 func NewShardCache(p ShardCacheParams) ShardCache {
 	cache := &ShardToExecutorCache{
-		namespaceToShards: make(NamespaceToShards),
-		timeSource:        p.TimeSource,
-		executorStore:     p.ExecutorStore,
-		stopC:             make(chan struct{}),
-		logger:            p.Logger,
-		wg:                sync.WaitGroup{},
-		metricsClient:     p.MetricsClient,
+		namespaceToShards:     make(NamespaceToShards),
+		namespaceToRangeIndex: make(NamespaceToRangeIndex),
+		timeSource:            p.TimeSource,
+		executorStore:         p.ExecutorStore,
+		stopC:                 make(chan struct{}),
+		logger:                p.Logger,
+		wg:                    sync.WaitGroup{},
+		metricsClient:         p.MetricsClient,
 	}
 
 	// Nothing to start: the per-namespace refresh loops begin lazily on first use.
@@ -116,6 +120,22 @@ func (s *ShardToExecutorCache) GetShardAssignments(namespace string) (store.Assi
 	return namespaceShardToExecutor.GetShardAssignments(), nil
 }
 
+func (s *ShardToExecutorCache) GetRangeForShardKey(ctx context.Context, namespace string, key []byte) (*store.RangeAssignment, error) {
+	index, err := s.getNamespaceRangeIndex(namespace)
+	if err != nil {
+		return nil, err
+	}
+	return index.GetRangeForKey(ctx, key)
+}
+
+func (s *ShardToExecutorCache) GetRangeAssignments(ctx context.Context, namespace string) ([]*store.RangeAssignment, error) {
+	index, err := s.getNamespaceRangeIndex(namespace)
+	if err != nil {
+		return nil, err
+	}
+	return index.GetRangeAssignments(ctx)
+}
+
 func (s *ShardToExecutorCache) getNamespaceShardToExecutor(namespace string) (*namespaceShardToExecutor, error) {
 	s.RLock()
 	namespaceShardToExecutor, ok := s.namespaceToShards[namespace]
@@ -139,4 +159,29 @@ func (s *ShardToExecutorCache) getNamespaceShardToExecutor(namespace string) (*n
 
 	s.namespaceToShards[namespace] = namespaceShardToExecutor
 	return namespaceShardToExecutor, nil
+}
+
+func (s *ShardToExecutorCache) getNamespaceRangeIndex(namespace string) (*namespaceRangeIndex, error) {
+	s.RLock()
+	index, ok := s.namespaceToRangeIndex[namespace]
+	s.RUnlock()
+
+	if ok {
+		return index, nil
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	if index, ok := s.namespaceToRangeIndex[namespace]; ok {
+		return index, nil
+	}
+
+	index = newNamespaceRangeIndex(namespace, s.executorStore, s.stopC, s.logger, s.metricsClient)
+	if err := index.Start(&s.wg); err != nil {
+		return nil, fmt.Errorf("start namespace range index: %w", err)
+	}
+
+	s.namespaceToRangeIndex[namespace] = index
+	return index, nil
 }

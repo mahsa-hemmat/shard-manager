@@ -110,6 +110,14 @@ func TestShardCacheNamespaceStartFailure(t *testing.T) {
 			_, _, err := cache.Subscribe(namespace)
 			return err
 		},
+		"GetRangeForShardKey": func() error {
+			_, err := cache.GetRangeForShardKey(context.Background(), namespace, testBound(0x00))
+			return err
+		},
+		"GetRangeAssignments": func() error {
+			_, err := cache.GetRangeAssignments(context.Background(), namespace)
+			return err
+		},
 	}
 
 	for name, call := range tests {
@@ -117,4 +125,38 @@ func TestShardCacheNamespaceStartFailure(t *testing.T) {
 			assert.ErrorContains(t, call(), "subscribe failed")
 		})
 	}
+}
+
+// The range index is created lazily on first use, like the discrete cache, and
+// forwards lookups to the per-namespace holder.
+func TestShardCacheRangeIndex(t *testing.T) {
+	const namespace = "range-namespace"
+
+	executorStore := store.NewMockStore(gomock.NewController(t))
+	executorStore.EXPECT().
+		SubscribeToNamespaceChanges(namespace).
+		Return((<-chan struct{})(make(chan struct{})), nil)
+	executorStore.EXPECT().
+		ListRanges(gomock.Any(), namespace).
+		Return(testCover(t, "executor-low", "executor-high"), nil).
+		Times(1)
+
+	cache := NewShardCache(ShardCacheParams{
+		ExecutorStore: executorStore,
+		Lifecycle:     fxtest.NewLifecycle(t),
+		Logger:        testlogger.New(t),
+		TimeSource:    clock.NewRealTimeSource(),
+		MetricsClient: metrics.NewNoopMetricsClient(),
+	}).(*ShardToExecutorCache)
+	defer cache.Stop()
+
+	assignment, err := cache.GetRangeForShardKey(context.Background(), namespace, testBound(0x80))
+	require.NoError(t, err)
+	assert.Equal(t, "executor-high", assignment.ExecutorID)
+
+	assignments, err := cache.GetRangeAssignments(context.Background(), namespace)
+	require.NoError(t, err)
+	assert.Len(t, assignments, 2)
+
+	assert.Contains(t, cache.namespaceToRangeIndex, namespace)
 }

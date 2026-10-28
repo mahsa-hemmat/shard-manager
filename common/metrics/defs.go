@@ -233,6 +233,9 @@ const (
 	// ShardDistributorGetDrainedHostsScope tracks GetDrainedHosts API calls received by service
 	ShardDistributorGetDrainedHostsScope
 
+	// ShardDistributorRangeIndexScope tracks the per-namespace range index cache
+	ShardDistributorRangeIndexScope
+
 	NumShardDistributorScopes
 )
 
@@ -297,6 +300,7 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		ShardDistributorDrainHostsScope:                            {operation: "DrainHosts"},
 		ShardDistributorUndrainHostsScope:                          {operation: "UndrainHosts"},
 		ShardDistributorGetDrainedHostsScope:                       {operation: "GetDrainedHosts"},
+		ShardDistributorRangeIndexScope:                            {operation: "RangeIndex"},
 	},
 }
 
@@ -385,6 +389,10 @@ const (
 	// closed stream. These are expected terminations (client disconnect, server shutdown), not failures.
 	ShardDistributorErrContextCanceledCounter
 
+	// ShardDistributorRangeIndexRebuildFailures counts range index rebuilds that failed and fell back
+	// to the last known good snapshot.
+	ShardDistributorRangeIndexRebuildFailures
+
 	NumShardDistributorMetrics
 )
 
@@ -449,6 +457,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorIsLeader:                    {metricName: "shard_distributor_is_leader", metricType: Gauge},
 		ShardDistributorAssignLoopNoActiveExecutors: {metricName: "shard_distributor_shard_assign_no_active_executors", metricType: Counter},
 		ShardDistributorErrContextCanceledCounter:   {metricName: "shard_distributor_err_context_canceled", metricType: Counter},
+		ShardDistributorRangeIndexRebuildFailures:   {metricName: "shard_distributor_range_index_rebuild_failures", metricType: Counter},
 	},
 }
 

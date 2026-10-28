@@ -26,4 +26,15 @@ type ShardCache interface {
 	// Subscribe signals when the namespace's assignments, executor metadata or
 	// drained shards change. The returned function unsubscribes.
 	Subscribe(namespace string) (<-chan struct{}, func(), error)
+
+	// GetRangeForShardKey returns the assignment that owns the given key in a
+	// range-based namespace. Returns ErrRangeIndexNotReady if the range index cannot be built.
+	// Callers should fail closed rather than fall back to the discrete path.
+	// The returned assignment is from the cached snapshot and must not be
+	// modified. Use GetRangeAssignments for a mutable copy.
+	GetRangeForShardKey(ctx context.Context, namespace string, key []byte) (*store.RangeAssignment, error)
+
+	// GetRangeAssignments returns a deep copy of the namespace's range cover.
+	// The result is owned by the caller.
+	GetRangeAssignments(ctx context.Context, namespace string) ([]*store.RangeAssignment, error)
 }
