@@ -77,7 +77,7 @@ type (
 
 	Namespace struct {
 		Name string `yaml:"name"`
-		Type string `yaml:"type"` // The field is a string since it is shared between global config Supported values: fixed|ephemeral.
+		Type string `yaml:"type"` // The field is a string since it is shared between global config. Supported values: fixed|ephemeral|range.
 		// ShardNum is defined for fixed namespace.
 		ShardNum int64 `yaml:"shardNum"`
 	}
@@ -117,6 +117,7 @@ type (
 const (
 	NamespaceTypeFixed     = "fixed"
 	NamespaceTypeEphemeral = "ephemeral"
+	NamespaceTypeRange     = "range"
 )
 
 // NewConfig returns a new instance of Config
