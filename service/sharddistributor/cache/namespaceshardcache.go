@@ -14,6 +14,7 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/log"
 	"github.com/cadence-workflow/shard-manager/common/log/tag"
+	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
@@ -62,17 +63,27 @@ type shardCache struct {
 	// refreshTimeout bounds an in-flight refresh; defaults to
 	// refreshOperationTimeout.
 	refreshTimeout time.Duration
+
+	// rangeCover serves GetRangeForShardKey for range namespaces; nil otherwise.
+	rangeCover *namespaceRangeCover
 }
 
 var _ ShardCache = (*shardCache)(nil)
 
-// NewShardCache builds the cache of one namespace.
-func NewShardCache(namespace string, executorStore store.Store, logger log.Logger, timeSource clock.TimeSource) ShardCache {
-	return newShardCache(namespace, executorStore, logger, timeSource)
+// ShardCacheOptions configures the optional per-namespace components.
+type ShardCacheOptions struct {
+	MetricsClient metrics.Client
+	// RangeMode starts the range cover that serves GetRangeForShardKey.
+	RangeMode bool
 }
 
-func newShardCache(namespace string, executorStore store.Store, logger log.Logger, timeSource clock.TimeSource) *shardCache {
-	return &shardCache{
+// NewShardCache builds the cache of one namespace.
+func NewShardCache(namespace string, executorStore store.Store, logger log.Logger, timeSource clock.TimeSource, opts ShardCacheOptions) ShardCache {
+	return newShardCache(namespace, executorStore, logger, timeSource, opts)
+}
+
+func newShardCache(namespace string, executorStore store.Store, logger log.Logger, timeSource clock.TimeSource, opts ShardCacheOptions) *shardCache {
+	c := &shardCache{
 		shardToExecutor:  make(map[string]*store.ShardOwner),
 		executorToShards: make(map[*store.ShardOwner][]string),
 		executorRevision: make(map[string]int64),
@@ -86,12 +97,27 @@ func newShardCache(namespace string, executorStore store.Store, logger log.Logge
 		timeSource:       timeSource,
 		refreshTimeout:   refreshOperationTimeout,
 	}
+
+	if opts.RangeMode {
+		metricsClient := opts.MetricsClient
+		if metricsClient == nil {
+			metricsClient = metrics.NewNoopMetricsClient()
+		}
+		c.rangeCover = newNamespaceRangeCover(namespace, executorStore, c.stopCh, c.logger, metricsClient)
+	}
+	return c
 }
 
 func (c *shardCache) Start() error {
 	changeCh, err := c.executorStore.SubscribeToNamespaceChanges(c.namespace)
 	if err != nil {
 		return fmt.Errorf("subscribe to namespace changes: %w", err)
+	}
+
+	if c.rangeCover != nil {
+		if err := c.rangeCover.Start(&c.wg); err != nil {
+			return fmt.Errorf("start range cover: %w", err)
+		}
 	}
 
 	c.wg.Add(1)
@@ -128,6 +154,15 @@ func (c *shardCache) GetShardOwner(ctx context.Context, shardID string) (*store.
 	}
 
 	return nil, store.ErrShardNotFound
+}
+
+// GetRangeForShardKey returns the range assignment that owns key. It is only
+// available when the cache was built with RangeMode.
+func (c *shardCache) GetRangeForShardKey(ctx context.Context, key []byte) (*store.RangeAssignment, error) {
+	if c.rangeCover == nil {
+		return nil, ErrRangeCoverNotReady
+	}
+	return c.rangeCover.GetRangeForKey(ctx, key)
 }
 
 // IsShardDrained answers from the cached drained set, which the namespace watch keeps current

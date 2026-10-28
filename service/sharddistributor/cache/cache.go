@@ -31,6 +31,12 @@ type ShardCache interface {
 	// GetShardAssignments returns a snapshot of assignments and drained shards.
 	GetShardAssignments() store.AssignmentSnapshot
 
+	// GetRangeForShardKey returns the assignment that owns key in a range
+	// namespace. It returns ErrRangeCoverNotReady when no valid cover has been
+	// read yet, and callers must fail closed rather than fall back to the
+	// discrete path.
+	GetRangeForShardKey(ctx context.Context, key []byte) (*store.RangeAssignment, error)
+
 	// GetShardAssignmentsIfNewer returns the snapshot only when its assignment revision is newer than knownRevision.
 	// Otherwise the snapshot carries just the assignment revision.
 	GetShardAssignmentsIfNewer(knownRevision int64) (store.AssignmentSnapshot, bool)

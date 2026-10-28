@@ -48,7 +48,10 @@ type Params struct {
 func New(p Params) *Manager {
 	var namespaces []Namespace
 	for _, nsCfg := range p.Registry.List() {
-		shardCache := cache.NewShardCache(nsCfg.Name, p.Store, p.Logger, p.TimeSource)
+		shardCache := cache.NewShardCache(nsCfg.Name, p.Store, p.Logger, p.TimeSource, cache.ShardCacheOptions{
+			MetricsClient: p.MetricsClient,
+			RangeMode:     nsCfg.Type == config.NamespaceTypeRange,
+		})
 
 		var assigner *ephemeralassigner.Assigner
 		if nsCfg.Type == config.NamespaceTypeEphemeral {
