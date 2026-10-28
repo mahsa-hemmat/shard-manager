@@ -71,6 +71,7 @@ func TestHasNamespaceStateChanged(t *testing.T) {
 	assignedStateKey := etcdkeys.BuildExecutorKey(_watchTestPrefix, _watchTestNamespace, _watchTestExecutor, etcdkeys.ExecutorAssignedStateKey)
 	reportedShardsKey := etcdkeys.BuildExecutorKey(_watchTestPrefix, _watchTestNamespace, _watchTestExecutor, etcdkeys.ExecutorReportedShardsKey)
 	metadataKey := etcdkeys.BuildMetadataKey(_watchTestPrefix, _watchTestNamespace, _watchTestExecutor, "metadata-key")
+	rangeKey := etcdkeys.BuildRangeKey(_watchTestPrefix, _watchTestNamespace, []byte{0x40, 0, 0, 0, 0, 0, 0, 0})
 
 	tests := []struct {
 		name     string
@@ -130,6 +131,31 @@ func TestHasNamespaceStateChanged(t *testing.T) {
 			name:     "drain alongside an untracked key",
 			events:   []*clientv3.Event{put(leaderKey, "host-1"), put(drainedKey, "")},
 			expected: true,
+		},
+		{
+			name:     "range added",
+			events:   []*clientv3.Event{put(rangeKey, "executor-1")},
+			expected: true,
+		},
+		{
+			name:     "range ownership changed",
+			events:   []*clientv3.Event{rewrite(rangeKey, "executor-1", "executor-2")},
+			expected: true,
+		},
+		{
+			name:     "range rewritten with same value",
+			events:   []*clientv3.Event{rewrite(rangeKey, "same", "same")},
+			expected: false,
+		},
+		{
+			name:     "range deleted",
+			events:   []*clientv3.Event{del(rangeKey)},
+			expected: true,
+		},
+		{
+			name:     "malformed range key",
+			events:   []*clientv3.Event{put(etcdkeys.BuildRangesPrefix(_watchTestPrefix, _watchTestNamespace)+"not-hex", "executor-1")},
+			expected: false,
 		},
 	}
 

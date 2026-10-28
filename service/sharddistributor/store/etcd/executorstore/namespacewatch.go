@@ -174,10 +174,11 @@ func (w *namespaceWatcher) signalNamespaceChange(changeChan chan<- struct{}) {
 }
 
 // hasNamespaceStateChanged reports whether a namespace watch response touched
-// executor assignments, executor metadata, or the drained shard set.
+// executor assignments, executor metadata, the drained shard set, or the range cover.
 func (w *namespaceWatcher) hasNamespaceStateChanged(watchResp clientv3.WatchResponse, namespace string) bool {
 	executorsPrefix := etcdkeys.BuildExecutorsPrefix(w.prefix, namespace)
 	drainedShardsPrefix := etcdkeys.BuildDrainedShardsPrefix(w.prefix, namespace)
+	rangesPrefix := etcdkeys.BuildRangesPrefix(w.prefix, namespace)
 
 	for _, event := range watchResp.Events {
 		key := string(event.Kv.Key)
@@ -206,6 +207,22 @@ func (w *namespaceWatcher) hasNamespaceStateChanged(watchResp clientv3.WatchResp
 			if _, err := etcdkeys.ParseDrainedShardKey(w.prefix, namespace, key); err != nil {
 				w.logger.Warn("Received drained shards watch event with unrecognized key format",
 					tag.ShardNamespace(namespace), tag.Key(key), tag.Error(err))
+				continue
+			}
+			return true
+
+		case strings.HasPrefix(key, rangesPrefix):
+			if _, err := etcdkeys.ParseRangeKey(w.prefix, namespace, key); err != nil {
+				w.logger.Warn("Received range watch event with unrecognized key format",
+					tag.ShardNamespace(namespace), tag.Key(key), tag.Error(err))
+				continue
+			}
+			// Ignore puts that rewrite the same value. Revision-only changes do not
+			// affect the range cover, so they are not treated as updates. Deletes are
+			// always counted because they change the cover.
+			if event.Type == clientv3.EventTypePut &&
+				event.PrevKv != nil &&
+				string(event.Kv.Value) == string(event.PrevKv.Value) {
 				continue
 			}
 			return true
