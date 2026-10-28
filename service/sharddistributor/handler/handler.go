@@ -32,6 +32,7 @@ import (
 	"sync"
 
 	"github.com/cadence-workflow/shard-manager/common/clock"
+	"github.com/cadence-workflow/shard-manager/common/hash"
 	"github.com/cadence-workflow/shard-manager/common/log"
 	"github.com/cadence-workflow/shard-manager/common/log/tag"
 	"github.com/cadence-workflow/shard-manager/common/metrics"
@@ -113,6 +114,10 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 		}
 	}
 
+	if h.shardDistributionCfg.Namespaces[namespaceIdx].Type == config.NamespaceTypeRange {
+		return h.getRangeShardOwner(ctx, request)
+	}
+
 	shardOwner, err := h.shardCache.GetShardOwner(ctx, request.Namespace, request.ShardKey)
 
 	if errors.Is(err, store.ErrShardDrained) {
@@ -142,6 +147,38 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 	}, nil
 }
 
+// getRangeShardOwner resolves ownership from the namespace's cached range
+// cover. Ownership comes from the matching range, while executor metadata is
+// loaded separately from the executor ledger.s
+func (h *handlerImpl) getRangeShardOwner(ctx context.Context, request *types.GetShardOwnerRequest) (*types.GetShardOwnerResponse, error) {
+	key := hash.Fingerprint64String(request.ShardKey)
+
+	assignment, err := h.shardCache.GetRangeForShardKey(ctx, request.Namespace, key)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get range owner: %v", err)}
+	}
+
+	response := &types.GetShardOwnerResponse{
+		Owner:     assignment.ExecutorID,
+		Namespace: request.Namespace,
+	}
+
+	executor, err := h.shardCache.GetExecutor(ctx, request.Namespace, assignment.ExecutorID)
+	if err != nil {
+		// The range assignment is the source of truth for ownership. If the executor
+		// record is missing, return the owner and omit the metadata.
+		h.logger.Error("failed to load metadata for range owner",
+			tag.ShardNamespace(request.Namespace),
+			tag.Dynamic("executor-id", assignment.ExecutorID),
+			tag.Error(err),
+		)
+		return response, nil
+	}
+
+	response.Metadata = executor.Metadata
+	return response, nil
+}
+
 // InspectShard returns the shard owner from storage
 func (h *handlerImpl) InspectShard(ctx context.Context, request *types.GetShardOwnerRequest) (resp *types.GetShardOwnerResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
@@ -153,6 +190,13 @@ func (h *handlerImpl) InspectShard(ctx context.Context, request *types.GetShardO
 		return nil, &types.NamespaceNotFoundError{
 			Namespace: request.Namespace,
 		}
+	}
+
+	if h.shardDistributionCfg.Namespaces[namespaceIdx].Type == config.NamespaceTypeRange {
+		// Range namespaces are owned per range, but InspectShard does not expose
+		// range ownership yet. Serving this from the discrete cache could return an
+		// incorrect owner, so fail closed instead.
+		return nil, &types.InternalServiceError{Message: "InspectShard does not support range namespaces"}
 	}
 
 	shardOwner, err := h.shardCache.GetShardOwner(ctx, request.Namespace, request.ShardKey)

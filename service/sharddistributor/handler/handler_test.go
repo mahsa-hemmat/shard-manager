@@ -34,6 +34,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/cadence-workflow/shard-manager/common/clock"
+	"github.com/cadence-workflow/shard-manager/common/hash"
 	"github.com/cadence-workflow/shard-manager/common/log/testlogger"
 	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
@@ -46,6 +47,7 @@ import (
 const (
 	_testNamespaceFixed     = "test-fixed"
 	_testNamespaceEphemeral = "test-ephemeral"
+	_testNamespaceRange     = "test-range"
 )
 
 // newTestHandler creates a handlerImpl wired with a real ephemeral assigner backed
@@ -1511,4 +1513,124 @@ func TestGetDrainedHosts(t *testing.T) {
 			require.Equal(t, tt.wantHosts, resp.Hosts)
 		})
 	}
+}
+
+// A range namespace hashes the key, looks up the owning range, and loads
+// executor metadata from the executor ledger. Range boundary semantics are
+// tested elsewhere; this test only verifies the handler's wiring and that the
+// key fingerprint is passed to the range cache.
+func TestGetShardOwner_RangeMode(t *testing.T) {
+	tests := []struct {
+		name           string
+		shardKey       string
+		setupMocks     func(mockCache *cache.MockShardCache)
+		wantOwner      string
+		wantMetadata   map[string]string
+		wantErrContact string
+	}{
+		{
+			name:     "owner with metadata",
+			shardKey: "range-key",
+			setupMocks: func(mockCache *cache.MockShardCache) {
+				mockCache.EXPECT().
+					GetRangeForShardKey(gomock.Any(), _testNamespaceRange, hash.Fingerprint64String("range-key")).
+					Return(&store.RangeAssignment{ExecutorID: "executor-low"}, nil)
+				mockCache.EXPECT().
+					GetExecutor(gomock.Any(), _testNamespaceRange, "executor-low").
+					Return(&store.ShardOwner{ExecutorID: "executor-low", Metadata: map[string]string{"grpc_address": "low:7933"}}, nil)
+			},
+			wantOwner:    "executor-low",
+			wantMetadata: map[string]string{"grpc_address": "low:7933"},
+		},
+		{
+			name:     "no valid cover",
+			shardKey: "range-key",
+			setupMocks: func(mockCache *cache.MockShardCache) {
+				mockCache.EXPECT().
+					GetRangeForShardKey(gomock.Any(), _testNamespaceRange, hash.Fingerprint64String("range-key")).
+					Return(nil, cache.ErrRangeIndexNotReady)
+			},
+			wantErrContact: "range index not ready",
+		},
+		{
+			name:     "key not covered",
+			shardKey: "range-key",
+			setupMocks: func(mockCache *cache.MockShardCache) {
+				mockCache.EXPECT().
+					GetRangeForShardKey(gomock.Any(), _testNamespaceRange, hash.Fingerprint64String("range-key")).
+					Return(nil, errors.New("no range covering key"))
+			},
+			wantErrContact: "no range covering key",
+		},
+		{
+			name:     "executor metadata is missing",
+			shardKey: "range-key",
+			setupMocks: func(mockCache *cache.MockShardCache) {
+				mockCache.EXPECT().
+					GetRangeForShardKey(gomock.Any(), _testNamespaceRange, hash.Fingerprint64String("range-key")).
+					Return(&store.RangeAssignment{ExecutorID: "executor-low"}, nil)
+				mockCache.EXPECT().
+					GetExecutor(gomock.Any(), _testNamespaceRange, "executor-low").
+					Return(nil, store.ErrExecutorNotFound)
+			},
+			wantOwner: "executor-low",
+		},
+	}
+
+	cfg := config.ShardDistribution{
+		Namespaces: []config.Namespace{
+			{Name: _testNamespaceRange, Type: config.NamespaceTypeRange},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockCache := cache.NewMockShardCache(ctrl)
+			if tt.setupMocks != nil {
+				tt.setupMocks(mockCache)
+			}
+
+			handler := newTestHandler(t, cfg, store.NewMockStore(ctrl), mockCache)
+
+			resp, err := handler.GetShardOwner(context.Background(), &types.GetShardOwnerRequest{
+				Namespace: _testNamespaceRange,
+				ShardKey:  tt.shardKey,
+			})
+
+			if tt.wantErrContact != "" {
+				require.Nil(t, resp)
+				require.ErrorContains(t, err, tt.wantErrContact)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantOwner, resp.Owner)
+			require.Equal(t, _testNamespaceRange, resp.Namespace)
+			require.Equal(t, tt.wantMetadata, resp.Metadata)
+		})
+	}
+}
+
+// Range namespaces are not supported by InspectShard. The handler should
+// reject the request before attempting a discrete ownership lookup.
+func TestInspectShard_RangeNamespace(t *testing.T) {
+	cfg := config.ShardDistribution{
+		Namespaces: []config.Namespace{
+			{Name: _testNamespaceRange, Type: config.NamespaceTypeRange},
+		},
+	}
+
+	ctrl := gomock.NewController(t)
+	mockCache := cache.NewMockShardCache(ctrl)
+	// Deliberately no GetShardOwner expectation: the guard must return first.
+	handler := newTestHandler(t, cfg, store.NewMockStore(ctrl), mockCache)
+
+	resp, err := handler.InspectShard(context.Background(), &types.GetShardOwnerRequest{
+		Namespace: _testNamespaceRange,
+		ShardKey:  "any-key",
+	})
+
+	require.Nil(t, resp)
+	require.ErrorContains(t, err, "does not support range namespaces")
 }
