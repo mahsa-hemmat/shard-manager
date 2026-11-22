@@ -87,6 +87,7 @@ func TestGetLoadBalancingMode(t *testing.T) {
 func TestEffectiveNamespace(t *testing.T) {
 	ephemeralNamespace := Namespace{Name: "ephemeral-namespace", Type: NamespaceTypeEphemeral}
 	fixedNamespace := Namespace{Name: "fixed-namespace", Type: NamespaceTypeFixed, ShardNum: 32}
+	rangeNamespace := Namespace{Name: "range-namespace", Type: NamespaceTypeRange}
 
 	tests := []struct {
 		name          string
@@ -117,6 +118,12 @@ func TestEffectiveNamespace(t *testing.T) {
 			static:        fixedNamespace,
 			fixedShardNum: 64,
 			want:          Namespace{Name: "fixed-namespace", Type: NamespaceTypeFixed, ShardNum: 64},
+		},
+		{
+			name:          "positive leaves a range namespace unchanged",
+			static:        rangeNamespace,
+			fixedShardNum: 8192,
+			want:          rangeNamespace,
 		},
 	}
 
