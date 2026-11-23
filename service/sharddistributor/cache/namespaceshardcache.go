@@ -72,6 +72,8 @@ var _ ShardCache = (*shardCache)(nil)
 
 // ShardCacheOptions configures the optional per-namespace components.
 type ShardCacheOptions struct {
+	// MetricsClient is required when RangeMode is set.
+	// It records range cover rebuild failures.
 	MetricsClient metrics.Client
 	// RangeMode starts the range cover that serves GetRangeForShardKey.
 	RangeMode bool
