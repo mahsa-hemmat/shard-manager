@@ -146,8 +146,8 @@ func (c *Config) GetLoadBalancingMode(namespace string) types.LoadBalancingMode 
 }
 
 // EffectiveNamespace returns the configuration ns runs with. A positive fixedShardNum
-// makes it fixed with that many shards; a range namespace keeps its configured type
-// because its layout is the cover, not a shard count.
+// makes it fixed with that many shards. Range namespaces are unaffected because their
+// ranges come from the cover, not from a shard count.
 func EffectiveNamespace(ns Namespace, fixedShardNum int) Namespace {
 	if fixedShardNum <= 0 || ns.Type == NamespaceTypeRange {
 		return ns
