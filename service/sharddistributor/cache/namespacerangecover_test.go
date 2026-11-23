@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/log/testlogger"
 	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
@@ -19,14 +19,10 @@ import (
 
 const testRangeNamespace = "range-namespace"
 
-// testBound builds an 8-byte big-endian bound with the given first byte and
-// zeroes elsewhere.
 func testBound(first byte) []byte {
 	return []byte{first, 0, 0, 0, 0, 0, 0, 0}
 }
 
-// testCover returns a valid two-range cover: [00.., 80..) owned by lowOwner and
-// [80.., ∞) owned by highOwner.
 func testCover(t *testing.T, lowOwner, highOwner string) []*store.RangeAssignment {
 	t.Helper()
 
@@ -41,35 +37,43 @@ func testCover(t *testing.T, lowOwner, highOwner string) []*store.RangeAssignmen
 	}
 }
 
-func newTestRangeCover(t *testing.T, executorStore store.Store, metricsClient metrics.Client) *namespaceRangeCover {
+func testInvalidCover(t *testing.T) []*store.RangeAssignment {
 	t.Helper()
-	return newNamespaceRangeCover(testRangeNamespace, executorStore, make(chan struct{}), testlogger.New(t), metricsClient)
+
+	notAtMinimum, err := types.NewRange(testBound(0x10), testBound(0x80))
+	require.NoError(t, err)
+	final, err := types.NewFinalRange(testBound(0x80))
+	require.NoError(t, err)
+
+	return []*store.RangeAssignment{
+		{Range: notAtMinimum, ExecutorID: "executor-1"},
+		{Range: final, ExecutorID: "executor-2"},
+	}
 }
 
-// expectRebuildFailureMetric registers the counters a single failed rebuild must
-// report: the failure counter on a scope tagged with the namespace.
-func expectRebuildFailureMetric(ctrl *gomock.Controller) metrics.Client {
-	metricsClient := metrics.NewMockClient(ctrl)
+func newTestRangeCover(t *testing.T, executorStore store.Store, metricsClient metrics.Client) *namespaceRangeCover {
+	t.Helper()
+	return newNamespaceRangeCover(testRangeNamespace, executorStore, testlogger.New(t), metricsClient)
+}
+
+func expectRebuildFailureMetric(ctrl *gomock.Controller, metricsClient *metrics.MockClient) {
 	scope := metrics.NewMockScope(ctrl)
 	metricsClient.EXPECT().Scope(metrics.ShardDistributorRangeCoverScope).Return(scope)
 	scope.EXPECT().Tagged(metrics.NamespaceTag(testRangeNamespace)).Return(scope)
 	scope.EXPECT().IncCounter(metrics.ShardDistributorRangeCoverRebuildFailures)
-	return metricsClient
 }
 
 func TestNamespaceRangeCover_GetRangeForKey(t *testing.T) {
-	const namespace = testRangeNamespace
-
 	ctrl := gomock.NewController(t)
 	executorStore := store.NewMockStore(ctrl)
 	executorStore.EXPECT().
-		ListRanges(gomock.Any(), namespace).
+		ListRanges(gomock.Any(), testRangeNamespace).
 		Return(testCover(t, "executor-low", "executor-high"), nil).
 		Times(1)
 
-	index := newTestRangeCover(t, executorStore, metrics.NewNoopMetricsClient())
+	cover := newTestRangeCover(t, executorStore, metrics.NewNoopMetricsClient())
 
-	tests := []struct {
+	for _, tt := range []struct {
 		name string
 		key  []byte
 		want string
@@ -78,177 +82,85 @@ func TestNamespaceRangeCover_GetRangeForKey(t *testing.T) {
 		{"interior of the lower range", testBound(0x7F), "executor-low"},
 		{"shared boundary belongs to the upper range", testBound(0x80), "executor-high"},
 		{"maximum fingerprint stays in the final range", []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, "executor-high"},
-	}
-
-	for _, tt := range tests {
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			assignment, err := index.GetRangeForKey(context.Background(), tt.key)
+			assignment, err := cover.GetRangeForKey(context.Background(), tt.key)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, assignment.ExecutorID)
 		})
 	}
 }
 
-// A namespace with no valid index has nothing safe to serve, so a range lookup
-// must fail closed rather than guess or fall back to the discrete path.
 func TestNamespaceRangeCover_FailsClosedWithoutSnapshot(t *testing.T) {
-	notAtMinimum, err := types.NewRange(testBound(0x10), testBound(0x80))
-	require.NoError(t, err)
-	final, err := types.NewFinalRange(testBound(0x80))
-	require.NoError(t, err)
-
-	tests := []struct {
-		name  string
-		cover []*store.RangeAssignment
-		err   error
+	for _, tt := range []struct {
+		name       string
+		cover      []*store.RangeAssignment
+		err        error
+		wantMetric bool
 	}{
-		{
-			name: "list ranges fails",
-			err:  errors.New("etcd unavailable"),
-		},
-		{
-			name:  "empty cover",
-			cover: nil,
-		},
-		{
-			name: "cover does not start at the minimum bound",
-			cover: []*store.RangeAssignment{
-				{Range: notAtMinimum, ExecutorID: "executor-1"},
-				{Range: final, ExecutorID: "executor-2"},
-			},
-		},
-	}
-
-	for _, tt := range tests {
+		{"list ranges fails", nil, errors.New("etcd unavailable"), true},
+		{"unbootstrapped empty namespace does not count as a failure", []*store.RangeAssignment{}, nil, false},
+		{"cover does not start at the minimum bound", testInvalidCover(t), nil, true},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			executorStore := store.NewMockStore(ctrl)
-			executorStore.EXPECT().
-				ListRanges(gomock.Any(), testRangeNamespace).
-				Return(tt.cover, tt.err)
+			executorStore.EXPECT().ListRanges(gomock.Any(), testRangeNamespace).Return(tt.cover, tt.err)
 
-			index := newTestRangeCover(t, executorStore, expectRebuildFailureMetric(ctrl))
+			metricsClient := metrics.NewMockClient(ctrl)
+			if tt.wantMetric {
+				expectRebuildFailureMetric(ctrl, metricsClient)
+			}
 
-			_, err := index.GetRangeForKey(context.Background(), testBound(0x00))
+			cover := newTestRangeCover(t, executorStore, metricsClient)
+			_, err := cover.GetRangeForKey(context.Background(), testBound(0x00))
 			require.ErrorIs(t, err, ErrRangeCoverNotReady)
 		})
 	}
 }
 
-// A failed rebuild keeps the previous cover. The stale snapshot remains a
-// complete cover even if ownership information is temporarily out of date.
-func TestNamespaceRangeCover_RetainsLastKnownGood(t *testing.T) {
-	invalidCover := func(t *testing.T) []*store.RangeAssignment {
-		t.Helper()
-		notAtMinimum, err := types.NewRange(testBound(0x10), testBound(0x80))
-		require.NoError(t, err)
-		final, err := types.NewFinalRange(testBound(0x80))
-		require.NoError(t, err)
-		return []*store.RangeAssignment{
-			{Range: notAtMinimum, ExecutorID: "executor-1"},
-			{Range: final, ExecutorID: "executor-2"},
-		}
-	}
-
-	tests := []struct {
+func TestNamespaceRangeCover_RetainsLastKnownGoodAndRecovers(t *testing.T) {
+	for _, tt := range []struct {
 		name  string
 		cover []*store.RangeAssignment
 		err   error
 	}{
-		{
-			name: "list ranges fails on rebuild",
-			err:  errors.New("etcd unavailable"),
-		},
-		{
-			name:  "rebuilt cover is invalid",
-			cover: invalidCover(t),
-		},
-	}
-
-	for _, tt := range tests {
+		{"list ranges fails on rebuild", nil, errors.New("etcd unavailable")},
+		{"cover disappears after bootstrap", []*store.RangeAssignment{}, nil},
+		{"rebuilt cover is invalid", testInvalidCover(t), nil},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			executorStore := store.NewMockStore(ctrl)
 			gomock.InOrder(
-				executorStore.EXPECT().
-					ListRanges(gomock.Any(), testRangeNamespace).
-					Return(testCover(t, "executor-low", "executor-high"), nil),
-				executorStore.EXPECT().
-					ListRanges(gomock.Any(), testRangeNamespace).
-					Return(tt.cover, tt.err),
+				executorStore.EXPECT().ListRanges(gomock.Any(), testRangeNamespace).Return(testCover(t, "executor-low", "executor-high"), nil),
+				executorStore.EXPECT().ListRanges(gomock.Any(), testRangeNamespace).Return(tt.cover, tt.err),
+				executorStore.EXPECT().ListRanges(gomock.Any(), testRangeNamespace).Return(testCover(t, "executor-recovered-low", "executor-recovered-high"), nil),
 			)
 
 			metricsClient := metrics.NewMockClient(ctrl)
-			index := newTestRangeCover(t, executorStore, metricsClient)
+			cover := newTestRangeCover(t, executorStore, metricsClient)
 
-			assignment, err := index.GetRangeForKey(context.Background(), testBound(0x00))
+			assignment, err := cover.GetRangeForKey(context.Background(), testBound(0x00))
 			require.NoError(t, err)
 			assert.Equal(t, "executor-low", assignment.ExecutorID)
 
-			// The failed rebuild reports the failure and returns the previous
-			// snapshot instead of an error.
-			scope := metrics.NewMockScope(ctrl)
-			metricsClient.EXPECT().Scope(metrics.ShardDistributorRangeCoverScope).Return(scope)
-			scope.EXPECT().Tagged(metrics.NamespaceTag(testRangeNamespace)).Return(scope)
-			scope.EXPECT().IncCounter(metrics.ShardDistributorRangeCoverRebuildFailures)
+			expectRebuildFailureMetric(ctrl, metricsClient)
+			require.NoError(t, cover.refresh(context.Background()))
 
-			_, err = index.rebuild(context.Background())
-			require.NoError(t, err)
-
-			assignment, err = index.GetRangeForKey(context.Background(), testBound(0x80))
+			assignment, err = cover.GetRangeForKey(context.Background(), testBound(0x80))
 			require.NoError(t, err)
 			assert.Equal(t, "executor-high", assignment.ExecutorID)
+
+			require.NoError(t, cover.refresh(context.Background()))
+
+			assignment, err = cover.GetRangeForKey(context.Background(), testBound(0x00))
+			require.NoError(t, err)
+			assert.Equal(t, "executor-recovered-low", assignment.ExecutorID)
 		})
 	}
 }
 
-// A successful rebuild replaces the retained cover and restores fresh
-// ownership information.
-func TestNamespaceRangeCover_RecoversAfterFailedRebuild(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	executorStore := store.NewMockStore(ctrl)
-	gomock.InOrder(
-		executorStore.EXPECT().
-			ListRanges(gomock.Any(), testRangeNamespace).
-			Return(testCover(t, "executor-low", "executor-high"), nil),
-		executorStore.EXPECT().
-			ListRanges(gomock.Any(), testRangeNamespace).
-			Return(nil, errors.New("etcd unavailable")),
-		executorStore.EXPECT().
-			ListRanges(gomock.Any(), testRangeNamespace).
-			Return(testCover(t, "executor-recovered-low", "executor-recovered-high"), nil),
-	)
-
-	metricsClient := metrics.NewMockClient(ctrl)
-	index := newTestRangeCover(t, executorStore, metricsClient)
-
-	assignment, err := index.GetRangeForKey(context.Background(), testBound(0x00))
-	require.NoError(t, err)
-	assert.Equal(t, "executor-low", assignment.ExecutorID)
-
-	// The failed rebuild reports the failure and keeps the previous cover.
-	scope := metrics.NewMockScope(ctrl)
-	metricsClient.EXPECT().Scope(metrics.ShardDistributorRangeCoverScope).Return(scope)
-	scope.EXPECT().Tagged(metrics.NamespaceTag(testRangeNamespace)).Return(scope)
-	scope.EXPECT().IncCounter(metrics.ShardDistributorRangeCoverRebuildFailures)
-	_, err = index.rebuild(context.Background())
-	require.NoError(t, err)
-
-	assignment, err = index.GetRangeForKey(context.Background(), testBound(0x00))
-	require.NoError(t, err)
-	assert.Equal(t, "executor-low", assignment.ExecutorID, "the retained cover still answers")
-
-	// The next successful rebuild swaps in the new cover.
-	_, err = index.rebuild(context.Background())
-	require.NoError(t, err)
-
-	assignment, err = index.GetRangeForKey(context.Background(), testBound(0x00))
-	require.NoError(t, err)
-	assert.Equal(t, "executor-recovered-low", assignment.ExecutorID)
-}
-
-// A cancelled caller sees its own context error while the flight completes:
-// the joiner behind it must not inherit the cancellation.
 func TestNamespaceRangeCover_RebuildSurvivesCallerCancellation(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -264,12 +176,12 @@ func TestNamespaceRangeCover_RebuildSurvivesCallerCancellation(t *testing.T) {
 		}).
 		Times(1)
 
-	index := newTestRangeCover(t, executorStore, metrics.NewNoopMetricsClient())
+	cover := newTestRangeCover(t, executorStore, metrics.NewNoopMetricsClient())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancelled := make(chan error, 1)
 	go func() {
-		_, err := index.GetRangeForKey(ctx, testBound(0x00))
+		_, err := cover.GetRangeForKey(ctx, testBound(0x00))
 		cancelled <- err
 	}()
 
@@ -277,12 +189,10 @@ func TestNamespaceRangeCover_RebuildSurvivesCallerCancellation(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, <-cancelled, context.Canceled)
 
-	// A second caller joins the same flight and is served by it, not by the
-	// cancellation of the first caller.
 	assignment := make(chan *store.RangeAssignment, 1)
 	lookupErr := make(chan error, 1)
 	go func() {
-		a, err := index.GetRangeForKey(context.Background(), testBound(0x80))
+		a, err := cover.GetRangeForKey(context.Background(), testBound(0x80))
 		assignment <- a
 		lookupErr <- err
 	}()
@@ -292,8 +202,6 @@ func TestNamespaceRangeCover_RebuildSurvivesCallerCancellation(t *testing.T) {
 	assert.Equal(t, "executor-high", (<-assignment).ExecutorID)
 }
 
-// A hung etcd read must not hold the flight forever. The rebuild times out
-// and reports the failure.
 func TestNamespaceRangeCover_RebuildTimeoutFailsClosed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	executorStore := store.NewMockStore(ctrl)
@@ -304,49 +212,56 @@ func TestNamespaceRangeCover_RebuildTimeoutFailsClosed(t *testing.T) {
 			return nil, ctx.Err()
 		})
 
-	index := newTestRangeCover(t, executorStore, expectRebuildFailureMetric(ctrl))
-	index.refreshTimeout = 20 * time.Millisecond
+	metricsClient := metrics.NewMockClient(ctrl)
+	expectRebuildFailureMetric(ctrl, metricsClient)
 
-	_, err := index.GetRangeForKey(context.Background(), testBound(0x00))
+	cover := newTestRangeCover(t, executorStore, metricsClient)
+	cover.refreshTimeout = 20 * time.Millisecond
+
+	_, err := cover.GetRangeForKey(context.Background(), testBound(0x00))
 	require.ErrorIs(t, err, ErrRangeCoverNotReady)
 }
 
-// The holder only learns about a new cover from the namespace watch, so a
-// signal must trigger a rebuild.
-func TestNamespaceRangeCover_RefreshLoopRebuildsOnSignal(t *testing.T) {
+func TestShardCache_RangeModeRefreshesCoverFromNamespaceWatch(t *testing.T) {
 	changeCh := make(chan struct{}, 1)
 	built := make(chan struct{}, 2)
-	cover := testCover(t, "executor-low", "executor-high")
 
 	ctrl := gomock.NewController(t)
 	executorStore := store.NewMockStore(ctrl)
-	executorStore.EXPECT().
-		SubscribeToNamespaceChanges(testRangeNamespace).
-		Return((<-chan struct{})(changeCh), nil)
-	executorStore.EXPECT().
-		ListRanges(gomock.Any(), testRangeNamespace).
-		Do(func(context.Context, string) { built <- struct{}{} }).
-		Return(cover, nil).
-		Times(2)
+	executorStore.EXPECT().SubscribeToNamespaceChanges(testRangeNamespace).Return((<-chan struct{})(changeCh), nil).Times(1)
+	executorStore.EXPECT().GetAssignmentState(gomock.Any(), testRangeNamespace).Return(&store.AssignmentState{Revision: 1}, nil).Times(2)
+	gomock.InOrder(
+		executorStore.EXPECT().
+			ListRanges(gomock.Any(), testRangeNamespace).
+			Do(func(context.Context, string) { built <- struct{}{} }).
+			Return([]*store.RangeAssignment{}, nil),
+		executorStore.EXPECT().
+			ListRanges(gomock.Any(), testRangeNamespace).
+			Do(func(context.Context, string) { built <- struct{}{} }).
+			Return(testCover(t, "executor-low", "executor-high"), nil),
+	)
 
-	index := newTestRangeCover(t, executorStore, metrics.NewNoopMetricsClient())
-
-	var wg sync.WaitGroup
-	require.NoError(t, index.Start(&wg))
+	c := newShardCache(testRangeNamespace, executorStore, testlogger.New(t), clock.NewMockedTimeSource(), ShardCacheOptions{
+		MetricsClient: metrics.NewNoopMetricsClient(),
+		RangeMode:     true,
+	})
+	require.NoError(t, c.Start())
+	defer c.Stop()
 
 	for range 2 {
 		changeCh <- struct{}{}
 		select {
 		case <-built:
 		case <-time.After(time.Second):
-			t.Fatal("watch signal did not trigger a rebuild")
+			t.Fatal("watch signal did not refresh the range cover")
 		}
 	}
 
-	close(changeCh)
-	wg.Wait()
+	require.Eventually(t, func() bool {
+		return c.rangeCover.currentCover() != nil
+	}, time.Second, time.Millisecond)
 
-	assignment, err := index.GetRangeForKey(context.Background(), testBound(0x80))
+	assignment, err := c.GetRangeForShardKey(context.Background(), testBound(0x80))
 	require.NoError(t, err)
 	assert.Equal(t, "executor-high", assignment.ExecutorID)
 }

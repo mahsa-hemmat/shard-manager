@@ -220,9 +220,7 @@ func (w *namespaceWatcher) hasNamespaceStateChanged(watchResp clientv3.WatchResp
 					tag.ShardNamespace(namespace), tag.Key(key), tag.Error(err))
 				continue
 			}
-			// Ignore puts that rewrite the same value. Revision-only changes do not
-			// affect the range cover, so they are not treated as updates. Deletes are
-			// always counted because they change the cover.
+			// Skip a put that rewrites the same value; deletes always count as a change.
 			if event.Type == clientv3.EventTypePut &&
 				event.PrevKv != nil &&
 				string(event.Kv.Value) == string(event.PrevKv.Value) {

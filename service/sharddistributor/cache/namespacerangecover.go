@@ -15,31 +15,22 @@ import (
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
-// ErrRangeCoverNotReady is returned when a range-mode namespace has no valid
-// cover to serve. Callers must fail closed: there is no fallback to the
-// discrete path.
+// ErrRangeCoverNotReady is returned when a range namespace has no valid cover to serve.
 var ErrRangeCoverNotReady = errors.New("range cover not ready")
 
 // namespaceRangeCover holds the range cover for one namespace as an immutable
-// *store.RangeCover snapshot. Readers look up the current pointer and search it
-// without holding a lock, so a rebuild never blocks a request.
-//
-// A failed rebuild keeps the previous snapshot. The range boundaries remain
-// valid, so a stale snapshot is still a complete cover even if ownership
-// information is temporarily out of date.
+// *store.RangeCover snapshot. A failed rebuild retains the previous snapshot,
+// which stays a complete cover while boundaries do not move.
 type namespaceRangeCover struct {
 	mu sync.RWMutex
 
 	namespace     string
 	cover         *store.RangeCover
 	executorStore store.Store
-	stopCh        chan struct{}
 	logger        log.Logger
 	metricsClient metrics.Client
 
-	// refreshSF serializes rebuilds. This prevents an older snapshot from
-	// overwriting a newer one since rebuilds never overlap and each reads at a
-	// revision at least as new as the previous rebuild.
+	// refreshSF serializes rebuilds so an older read cannot overwrite a newer cover.
 	refreshSF      singleflight.Group
 	refreshTimeout time.Duration
 }
@@ -47,83 +38,55 @@ type namespaceRangeCover struct {
 func newNamespaceRangeCover(
 	namespace string,
 	executorStore store.Store,
-	stopCh chan struct{},
 	logger log.Logger,
 	metricsClient metrics.Client,
 ) *namespaceRangeCover {
 	return &namespaceRangeCover{
 		namespace:      namespace,
 		executorStore:  executorStore,
-		stopCh:         stopCh,
 		logger:         logger.WithTags(tag.ShardNamespace(namespace)),
 		metricsClient:  metricsClient,
 		refreshTimeout: refreshOperationTimeout,
 	}
 }
 
-func (n *namespaceRangeCover) Start(wg *sync.WaitGroup) error {
-	changeCh, err := n.executorStore.SubscribeToNamespaceChanges(n.namespace)
-	if err != nil {
-		return fmt.Errorf("subscribe to namespace changes: %w", err)
-	}
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		n.refreshLoop(changeCh)
-	}()
-
-	return nil
-}
-
-func (n *namespaceRangeCover) refreshLoop(changeCh <-chan struct{}) {
-	for {
-		select {
-		case <-n.stopCh:
-			return
-
-		case _, ok := <-changeCh:
-			if !ok {
-				return
-			}
-
-			// The wait is bounded by the flight's refreshTimeout, so a stuck etcd
-			// read cannot keep this loop from observing stopCh. Failed rebuilds
-			// are already logged and counted, and the previous snapshot is
-			// retained.
-			_, _ = n.rebuild(context.Background())
-		}
-	}
-}
-
-// GetRangeForKey returns the assignment for the given key in the namespace.
-// It points into the immutable snapshot and must not be modified.
+// GetRangeForKey returns the assignment for key from the immutable snapshot.
 func (n *namespaceRangeCover) GetRangeForKey(ctx context.Context, key []byte) (*store.RangeAssignment, error) {
 	cover, err := n.snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// A valid cover answers every key, so a miss here is not possible.
 	return cover.GetRangeForKey(key), nil
 }
 
+// refresh updates the cached cover. An unbootstrapped empty namespace is not an
+// error for the background loop; lookups still fail closed with ErrRangeCoverNotReady.
+func (n *namespaceRangeCover) refresh(ctx context.Context) error {
+	_, err := n.rebuild(ctx)
+	if errors.Is(err, ErrRangeCoverNotReady) {
+		return nil
+	}
+	return err
+}
+
 func (n *namespaceRangeCover) snapshot(ctx context.Context) (*store.RangeCover, error) {
-	n.mu.RLock()
-	cover := n.cover
-	n.mu.RUnlock()
-	if cover != nil {
+	if cover := n.currentCover(); cover != nil {
 		return cover, nil
 	}
 
-	// No snapshot yet: build one on demand so the first request succeeds while
-	// etcd is healthy instead of failing until a watch signal arrives.
+	// Build on demand when cold so a request before the first watch signal succeeds.
 	return n.rebuild(ctx)
 }
 
-// rebuild runs rebuilds through singleflight. The actual rebuild uses a
-// detached, bounded context so one caller's cancellation does not affect other
-// waiters, and a hung etcd read cannot hold the flight key indefinitely.
+func (n *namespaceRangeCover) currentCover() *store.RangeCover {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.cover
+}
+
+// rebuild runs rebuilds through singleflight under a detached, bounded context so one
+// caller's cancellation cannot fail other waiters and a hung read cannot hold the key.
 func (n *namespaceRangeCover) rebuild(ctx context.Context) (*store.RangeCover, error) {
 	result := n.refreshSF.DoChan(refreshSingleFlightKey, func() (any, error) {
 		refreshCtx, cancel := context.WithTimeout(context.Background(), n.refreshTimeout)
@@ -147,6 +110,9 @@ func (n *namespaceRangeCover) rebuildOnce(ctx context.Context) (*store.RangeCove
 	if err != nil {
 		return n.retain(err)
 	}
+	if len(assignments) == 0 && n.currentCover() == nil {
+		return nil, ErrRangeCoverNotReady
+	}
 
 	cover, err := store.NewRangeCover(assignments)
 	if err != nil {
@@ -159,13 +125,9 @@ func (n *namespaceRangeCover) rebuildOnce(ctx context.Context) (*store.RangeCove
 	return cover, nil
 }
 
-// retain records a failed rebuild and returns the previous snapshot when one
-// is available. The cause is logged and wrapped in the returned error so store
-// failures remain distinguishable from an invalid cover.
+// retain records a failed rebuild and returns the previous snapshot when available.
 func (n *namespaceRangeCover) retain(cause error) (*store.RangeCover, error) {
-	n.mu.RLock()
-	previous := n.cover
-	n.mu.RUnlock()
+	previous := n.currentCover()
 
 	n.metricsClient.Scope(metrics.ShardDistributorRangeCoverScope).
 		Tagged(metrics.NamespaceTag(n.namespace)).

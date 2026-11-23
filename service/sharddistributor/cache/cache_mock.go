@@ -116,6 +116,21 @@ func (mr *MockShardCacheMockRecorder) GetShardOwner(ctx, shardID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetShardOwner", reflect.TypeOf((*MockShardCache)(nil).GetShardOwner), ctx, shardID)
 }
 
+// IsShardDrained mocks base method.
+func (m *MockShardCache) IsShardDrained(ctx context.Context, shardID string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsShardDrained", ctx, shardID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsShardDrained indicates an expected call of IsShardDrained.
+func (mr *MockShardCacheMockRecorder) IsShardDrained(ctx, shardID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsShardDrained", reflect.TypeOf((*MockShardCache)(nil).IsShardDrained), ctx, shardID)
+}
+
 // Start mocks base method.
 func (m *MockShardCache) Start() error {
 	m.ctrl.T.Helper()

@@ -99,11 +99,7 @@ func newShardCache(namespace string, executorStore store.Store, logger log.Logge
 	}
 
 	if opts.RangeMode {
-		metricsClient := opts.MetricsClient
-		if metricsClient == nil {
-			metricsClient = metrics.NewNoopMetricsClient()
-		}
-		c.rangeCover = newNamespaceRangeCover(namespace, executorStore, c.stopCh, c.logger, metricsClient)
+		c.rangeCover = newNamespaceRangeCover(namespace, executorStore, c.logger, opts.MetricsClient)
 	}
 	return c
 }
@@ -112,12 +108,6 @@ func (c *shardCache) Start() error {
 	changeCh, err := c.executorStore.SubscribeToNamespaceChanges(c.namespace)
 	if err != nil {
 		return fmt.Errorf("subscribe to namespace changes: %w", err)
-	}
-
-	if c.rangeCover != nil {
-		if err := c.rangeCover.Start(&c.wg); err != nil {
-			return fmt.Errorf("start range cover: %w", err)
-		}
 	}
 
 	c.wg.Add(1)
@@ -270,6 +260,12 @@ func (c *shardCache) refresh(ctx context.Context) error {
 	updated, err := c.refreshNamespaceState(ctx)
 	if err != nil {
 		return fmt.Errorf("refresh namespace state: %w", err)
+	}
+
+	if c.rangeCover != nil {
+		if err := c.rangeCover.refresh(ctx); err != nil {
+			return fmt.Errorf("refresh range cover: %w", err)
+		}
 	}
 
 	if updated {

@@ -110,10 +110,20 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 	}, nil
 }
 
-// getRangeShardOwner resolves ownership from the namespace's cached cover.
-// Ownership comes from the matching range; executor metadata is loaded
-// separately from the executor ledger.
+// getRangeShardOwner resolves ownership from the namespace's cached cover and
+// loads executor metadata from the executor ledger.
 func (h *handlerImpl) getRangeShardOwner(ctx context.Context, ns manager.Namespace, request *types.GetShardOwnerRequest) (*types.GetShardOwnerResponse, error) {
+	drained, err := ns.Cache().IsShardDrained(ctx, request.ShardKey)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to check drained shard: %v", err)}
+	}
+	if drained {
+		return nil, &types.ShardDrainedError{
+			Namespace: request.Namespace,
+			ShardKey:  request.ShardKey,
+		}
+	}
+
 	assignment, err := ns.Cache().GetRangeForShardKey(ctx, hash.Fingerprint64String(request.ShardKey))
 	if err != nil {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get range owner: %v", err)}
@@ -126,8 +136,7 @@ func (h *handlerImpl) getRangeShardOwner(ctx context.Context, ns manager.Namespa
 
 	executor, err := ns.Cache().GetExecutor(ctx, assignment.ExecutorID)
 	if err != nil {
-		// The range assignment is the source of truth for ownership, so a missing
-		// executor record still answers the lookup and only omits the metadata.
+		// The range assignment is authoritative for ownership; a missing executor record omits only metadata.
 		h.logger.Error("failed to load metadata for range owner",
 			tag.ShardNamespace(request.Namespace),
 			tag.Dynamic("executor-id", assignment.ExecutorID),
@@ -150,10 +159,7 @@ func (h *handlerImpl) InspectShard(ctx context.Context, request *types.GetShardO
 	}
 
 	if ns.Config().Type == config.NamespaceTypeRange {
-		// Range namespaces are owned per range, but InspectShard does not expose
-		// range ownership yet. Serving this from the discrete cache could return an
-		// incorrect owner, so fail closed instead.
-		return nil, &types.InternalServiceError{Message: "InspectShard does not support range namespaces"}
+		return h.getRangeShardOwner(ctx, ns, request)
 	}
 
 	shardOwner, err := ns.Cache().GetShardOwner(ctx, request.ShardKey)
