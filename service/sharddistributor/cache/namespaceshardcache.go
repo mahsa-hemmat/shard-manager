@@ -64,7 +64,8 @@ type shardCache struct {
 	// refreshOperationTimeout.
 	refreshTimeout time.Duration
 
-	// rangeCover serves GetRangeForShardKey for range namespaces; nil otherwise.
+	// rangeCover is set only for range namespaces and serves GetRangeForShardKey.
+	// It is nil for fixed and ephemeral namespaces.
 	rangeCover *namespaceRangeCover
 }
 
